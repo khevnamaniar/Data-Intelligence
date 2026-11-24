@@ -55,6 +55,40 @@ def export_pdf(report: dict, datasets: list | None = None) -> bytes:
         story += [P(f"Business objective: {p['business_objective']}"), Spacer(1, 4)]
     story += [P(DISCLAIMER, small), Spacer(1, 8)]
 
+    ex = report.get("executive")
+    if ex and ex.get("cards"):
+        story.append(Paragraph("Executive Dashboard", h1))
+        tiles = [[Paragraph(f"<font size='7' color='#64748b'>{escape(t['label'].upper())}</font><br/><font size='15'><b>{escape(t['value'])}</b></font>"
+                            f"<br/><font size='7' color='#64748b'>{escape(t['note'][:60])}</font>", body) for t in ex["tiles"]]]
+        tt = Table(tiles, colWidths=[4.25 * cm] * len(ex["tiles"]))
+        tt.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")), ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+        story += [tt, Spacer(1, 6)]
+        if ex.get("top_win"):
+            story.append(Paragraph(f"<font color='#047857'><b>▲ Biggest positive:</b></font> {escape(ex['top_win'])}", body))
+        if ex.get("top_risk"):
+            story.append(Paragraph(f"<font color='#b91c1c'><b>! Biggest concern:</b></font> {escape(ex['top_risk'])}", body))
+        if ex.get("decisions"):
+            story.append(Paragraph("<b>Decisions to consider:</b> " + " ".join(f"({i}) {escape(d)}" for i, d in enumerate(ex["decisions"], 1)), body))
+        story.append(Spacer(1, 6))
+        status_color = {"positive": "#047857", "watch": "#b45309", "action": "#b91c1c", "insufficient": "#475569", "info": "#1d4ed8"}
+        for c in ex["cards"]:
+            kpi = f"  <font size='13'><b>{escape(c['kpi']['value'])}</b></font> <font size='7' color='#64748b'>{escape(c['kpi']['label'])}</font>" if c.get("kpi") else ""
+            block = [Paragraph(f"<font size='7.5' color='#64748b'>{escape(c['question'])}</font> &nbsp; "
+                               f"<font size='7.5' color='{status_color.get(c['status'], '#334155')}'><b>{escape(c['status_label'].upper())}</b></font>", body),
+                     Paragraph(f"<b>{escape(c['headline'])}</b>{kpi}", body)]
+            if c.get("summary"):
+                block.append(P(c["summary"]))
+            if c.get("so_what"):
+                block.append(Paragraph(f"<b>What it means:</b> {escape(c['so_what'])}", body))
+            if c.get("next_step"):
+                block.append(Paragraph(f"<b>Recommended next step:</b> {escape(c['next_step'])}", body))
+            block.append(P(f"Evidence: {c['confidence_label']}", small))
+            block.append(Spacer(1, 7))
+            story.append(KeepTogether(block))
+        story.append(P(ex.get("note", ""), small))
+        story.append(PageBreak())
+
     story.append(Paragraph("Executive Summary", h1))
     for line in report["executive_summary"]:
         story.append(P("• " + line))
@@ -175,6 +209,54 @@ def export_docx(report: dict, datasets: list | None = None) -> bytes:
     note = d.add_paragraph(DISCLAIMER)
     note.runs[0].font.size = Pt(8)
     note.runs[0].italic = True
+
+    ex = report.get("executive")
+    if ex and ex.get("cards"):
+        d.add_heading("Executive Dashboard", 1)
+        t = d.add_table(rows=2, cols=len(ex["tiles"]))
+        t.style = "Light Grid Accent 1"
+        for i, tile in enumerate(ex["tiles"]):
+            t.rows[0].cells[i].text = tile["label"]
+            cell = t.rows[1].cells[i]
+            cell.text = ""
+            r = cell.paragraphs[0].add_run(tile["value"])
+            r.bold = True
+            r.font.size = Pt(16)
+            cell.add_paragraph(tile["note"]).runs[0].font.size = Pt(8)
+        if ex.get("top_win"):
+            p_ = d.add_paragraph()
+            p_.add_run("Biggest positive: ").bold = True
+            p_.add_run(ex["top_win"])
+        if ex.get("top_risk"):
+            p_ = d.add_paragraph()
+            p_.add_run("Biggest concern: ").bold = True
+            p_.add_run(ex["top_risk"])
+        if ex.get("decisions"):
+            d.add_paragraph().add_run("Decisions to consider").bold = True
+            for x in ex["decisions"]:
+                d.add_paragraph(x, style="List Number")
+        for c in ex["cards"]:
+            q = d.add_paragraph()
+            rq = q.add_run(f"{c['question']}   [{c['status_label'].upper()}]")
+            rq.font.size = Pt(8)
+            rq.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
+            h = d.add_paragraph()
+            h.add_run(c["headline"]).bold = True
+            if c.get("kpi"):
+                k = h.add_run(f"   {c['kpi']['value']} ")
+                k.bold = True
+                k.font.size = Pt(13)
+                h.add_run(c["kpi"]["label"]).font.size = Pt(8)
+            if c.get("summary"):
+                d.add_paragraph(c["summary"])
+            for label, key in (("What it means: ", "so_what"), ("Recommended next step: ", "next_step")):
+                if c.get(key):
+                    p_ = d.add_paragraph()
+                    p_.add_run(label).bold = True
+                    p_.add_run(c[key])
+            e = d.add_paragraph(f"Evidence: {c['confidence_label']}")
+            e.runs[0].font.size = Pt(8)
+        d.add_page_break()
 
     d.add_heading("Executive Summary", 1)
     for line in report["executive_summary"]:
@@ -300,6 +382,16 @@ def export_xlsx(report: dict, datasets: list | None = None) -> bytes:
     for line in report["executive_summary"]:
         ws.append([line])
     ws.column_dimensions["A"].width = 140
+    ex = report.get("executive")
+    if ex and ex.get("cards"):
+        ws_e = sheet("Executive Dashboard", ["Question", "Status", "Headline answer", "Key number", "What it means", "Recommended next step", "Evidence"],
+                     [[c["question"], c["status_label"], c["headline"], f"{c['kpi']['value']} {c['kpi']['label']}" if c.get("kpi") else "",
+                       c.get("so_what", ""), c.get("next_step", ""), c["confidence_label"]] for c in ex["cards"]],
+                     {"Question": 35, "Headline answer": 55, "Key number": 30, "What it means": 50, "Recommended next step": 55, "Evidence": 22})
+        ws_e.append([])
+        for t in ex["tiles"]:
+            ws_e.append([t["label"], t["value"], t["note"]])
+        wb.move_sheet(ws_e, offset=-(len(wb.sheetnames) - 2))
     sheet("Questions", ["Question", "Origin", "Status", "Answer", "Confidence", "Data needed"],
           [[q["question"], q["origin"], q["status"], q["answer"], q["confidence"], "; ".join(q["data_needed"])] for q in report["questions"]],
           {"Question": 40, "Answer": 90, "Data needed": 40})

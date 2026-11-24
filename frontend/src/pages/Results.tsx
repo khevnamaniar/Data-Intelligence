@@ -5,6 +5,7 @@ import { Link, navigate, parseHash } from "../router";
 import { Button, ConfidenceBadge, Empty, ErrorBox, Panel, Spinner, Tag, useAsync } from "../ui";
 import type { ProjectDetail } from "./Project";
 import { ErrorList } from "./Project";
+import { ExecutiveDashboard } from "./Executive";
 
 const SECTIONS: [string, string][] = [
   ["key_findings", "Key Findings"], ["major_trends", "Major Trends"], ["significant_changes", "Significant Changes"],
@@ -62,14 +63,43 @@ function Results({ run, d }: { run: any; d: ProjectDetail }) {
   const autoQs = run.questions.filter((q: any) => q.origin === "auto");
   const files = d.files.filter((f) => !run.file_ids.length || run.file_ids.includes(f.id));
   const [showAll, setShowAll] = useState(!!highlight);
+  const [view, setView] = useState<"exec" | "full">(highlight || !run.executive ? "full" : "exec");
   const [cat, setCat] = useState("");
   const research = res.research || {};
   const nav = [["summary", "Executive Summary"], ["questions", "Your Questions"], ...SECTIONS.filter(([k]) => res.sections?.[k]?.length), ["all", "All findings"],
     ["limitations", "Data Limitations"], ["unknown", "What We Still Need to Know"], ["research", "Recommended Research"], ["actions", "Recommended Actions"],
     ["future", "Future Questions"], ["sources", "Source References"]];
-  useEffect(() => { if (highlight) document.getElementById(`f-${highlight}`)?.scrollIntoView({ block: "center" }); }, [highlight]);
+  useEffect(() => { if (highlight) document.getElementById(`f-${highlight}`)?.scrollIntoView({ block: "center" }); }, [highlight, view]);
+  const openEvidence = (fid: string) => {
+    setShowAll(true);
+    setView("full");
+    window.location.hash = `#/p/${pid}/results/${run.id}?f=${fid}`;
+  };
+  const toggle = (
+    <div className="mb-4 inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm" role="tablist" aria-label="Results view">
+      {([["exec", "Executive dashboard"], ["full", "Full analysis"]] as const).map(([k, label]) => (
+        <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
+          className={`rounded-md px-3 py-1.5 font-medium ${view === k ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>{label}</button>
+      ))}
+    </div>
+  );
+  if (view === "exec" && run.executive) {
+    return (
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-2">{toggle}
+          <div className="mb-4 flex gap-2">
+            <Button small onClick={() => navigate(`/p/${pid}/reports?run=${run.id}`)}>Generate report</Button>
+            <Button small kind="secondary" onClick={() => navigate(`/p/${pid}/ask`)}>Ask a follow-up question</Button>
+          </div>
+        </div>
+        <ExecutiveDashboard data={run.executive} onEvidence={openEvidence} />
+      </div>
+    );
+  }
 
   return (
+    <div>
+    {run.executive && toggle}
     <div className="grid gap-6 lg:grid-cols-[13rem_1fr]">
       <aside className="hidden lg:block">
         <nav className="sticky top-4 space-y-0.5 text-sm">
@@ -161,6 +191,7 @@ function Results({ run, d }: { run: any; d: ProjectDetail }) {
               <tr key={s.file_id} className="border-t border-slate-100"><td className="py-1.5 pr-3"><a className="text-blue-700 underline" href={`/api/projects/${pid}/files/${s.file_id}/download`}>{s.name}</a></td><td className="pr-3">{s.type}</td><td className="pr-3">{s.role.replace(/_/g, " ")}</td><td>{s.findings_citing}</td></tr>))}</tbody></table>
         </Section>
       </div>
+    </div>
     </div>
   );
 }

@@ -58,6 +58,7 @@ def build_report(c: Connection, project: dict, run: dict, title: str | None = No
         "run": {"id": run["id"], "mode": run["mode"], "created_at": run["created_at"], "status": run["status"]},
         "questions": questions,
         "executive_summary": result.get("executive_summary", []),
+        "executive": data.get("executive"),
         "sections": sections,
         "gaps": data.get("gaps", []),
         "opportunities": data.get("opportunities", []),

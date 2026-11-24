@@ -93,14 +93,28 @@ class S3StorageProvider(StorageProvider):
         if code in ("NoSuchBucket",):
             raise StorageError("The storage bucket does not exist. Check the S3_BUCKET setting.") from exc
         if code in ("InvalidAccessKeyId", "SignatureDoesNotMatch", "AccessDenied", "403"):
-            raise StorageError("Cloud storage refused the credentials. Check the storage access key settings.") from exc
-        raise StorageError(f"Cloud storage {action} failed.") from exc
+            raise StorageError(f"Cloud storage refused the request (code {code}). Check the storage access key settings "
+                               "and that the key has read and write permission.") from exc
+        # The provider's error code is safe to show and makes problems diagnosable from a screenshot.
+        raise StorageError(f"Cloud storage {action} failed (code {code or exc.__class__.__name__}).") from exc
 
     # ------------------------------------------------------------- interface
+    MULTIPART_THRESHOLD = 8 * 1024 * 1024
+
     def put(self, key, data, content_type="application/octet-stream"):
         validate_key(key)
         try:
-            self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+            if len(data) > self.MULTIPART_THRESHOLD and hasattr(self.client, "upload_fileobj"):
+                # large files go up in 8 MB parts (multipart upload), which is more reliable
+                import io
+
+                from boto3.s3.transfer import TransferConfig
+
+                cfg = TransferConfig(multipart_threshold=self.MULTIPART_THRESHOLD, multipart_chunksize=self.MULTIPART_THRESHOLD,
+                                     max_concurrency=2, use_threads=True)
+                self.client.upload_fileobj(io.BytesIO(data), self.bucket, key, ExtraArgs={"ContentType": content_type}, Config=cfg)
+            else:
+                self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
         except Exception as exc:
             self._fail("upload", key, exc)
 

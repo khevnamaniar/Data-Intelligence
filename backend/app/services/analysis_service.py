@@ -224,4 +224,11 @@ def serialize_run(c: Connection, run: dict, include_findings: bool = True) -> di
         out["research_questions"] = c.fetchall("SELECT * FROM research_questions WHERE run_id = ? ORDER BY priority", [run["id"]])
         out["comparisons"] = c.fetchall("SELECT * FROM comparisons WHERE run_id = ?", [run["id"]])
         out["trends"] = c.fetchall("SELECT id, finding_id, measure, dimension, dimension_value, direction, start_period, end_period, start_value, end_value, pct_change, cagr, r_squared, acceleration FROM trends WHERE run_id = ?", [run["id"]])
+        from ..analytics.executive import build_executive_dashboard
+
+        try:
+            out["executive"] = build_executive_dashboard(out)
+        except Exception:  # the dashboard is a convenience view; never block the full results
+            log.exception("Executive dashboard could not be built for run %s", run["id"][:8])
+            out["executive"] = None
     return out

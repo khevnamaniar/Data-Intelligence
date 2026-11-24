@@ -162,10 +162,27 @@ async def selftest(request: Request):
             assert not s.exists(key), "object still exists after delete"
             return f"Uploaded, downloaded and deleted a test file ({s.name} storage)."
 
+        def storage_real_upload():
+            """Same path, size and type as a real upload (name with spaces and brackets, 1 MB PDF-type file)."""
+            import os as _os
+
+            from ..parsers import safe_filename
+            from ..services.ingestion import file_key
+
+            s = get_storage()
+            key = file_key("selftest-project", new_id(), safe_filename("Q3 Market Report (final) – draft.pdf"))
+            payload = b"%PDF-1.4\n" + _os.urandom(1024 * 1024)
+            s.put(key, payload, "application/pdf")
+            assert s.get(key) == payload, "read-back mismatch"
+            removed = s.delete_prefix("projects/selftest-project/")
+            assert removed >= 1, "test file was not removed"
+            return f"Stored, read back and removed a 1 MB document under a real upload path ({key.rsplit('/', 1)[-1]})."
+
         check("Database connection", lambda: (get_db().ping() and None), "Connected.")
         check("Database migrations", migrations, "")
         check("Database read/write", db_rw, "")
         check("File storage upload/download/delete", storage_rw, "")
+        check("Realistic document upload", storage_real_upload, "")
         return checks
 
     checks = await run_in_threadpool(run)

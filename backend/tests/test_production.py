@@ -90,7 +90,7 @@ def test_admin_overview_selftest_and_usage(admin_client, monkeypatch):
     st = c.post("/api/admin/selftest").json()
     assert st["all_ok"], st
     assert [x["check"] for x in st["checks"]] == ["Database connection", "Database migrations", "Database read/write",
-                                                    "File storage upload/download/delete"]
+                                                    "File storage upload/download/delete", "Realistic document upload"]
 
 
 def test_admin_reset_link_works_without_email(admin_client, make_client):
@@ -331,3 +331,58 @@ def test_destructive_migrations_are_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "MIGRATIONS_DIR", tmp_path)
     with pytest.raises(RuntimeError, match="destructive"):
         m.migrate(Database("sqlite:///:memory:"), verbose=False)
+
+
+def test_file_names_with_spaces_brackets_and_accents_upload(client):
+    """Regression: storage paths were rejected for names like 'Q3 Market Report (final).pdf'."""
+    register(client)
+    p = client.post("/api/projects", json={"name": "P"}).json()["project"]
+    names = ["Q3 Market Report (final).csv", "Neo Health – plan & budget 2026.csv", "Café données.csv"]
+    files = [("files", (n, b"Month,Revenue\n2024-01,1\n2024-02,2\n", "text/csv")) for n in names]
+    r = client.post(f"/api/projects/{p['id']}/files", files=files)
+    assert r.status_code == 201 and len(r.json()["accepted"]) == 3, r.text
+    listing = client.get(f"/api/projects/{p['id']}/files").json()["files"]
+    assert {f["status"] for f in listing} == {"processed"}
+    assert "Q3 Market Report (final).csv" in {f["original_name"] for f in listing}  # real name kept for users
+    fid = next(f["id"] for f in listing if f["original_name"].startswith("Q3"))
+    dl = client.get(f"/api/projects/{p['id']}/files/{fid}/download")
+    assert dl.status_code == 200 and dl.content.startswith(b"Month,Revenue")
+    assert "Q3%20Market%20Report%20%28final%29.csv" in dl.headers["content-disposition"]
+
+
+def test_storage_error_shows_safe_code(client, monkeypatch):
+    from app.storage import get_storage
+    from app.storage.s3 import S3StorageProvider
+
+    class Boom(FakeS3):
+        def put_object(self, **kw):
+            raise FakeClientError("InvalidArgument")
+
+    s3 = S3StorageProvider("b", "https://e", "k", "s", client=Boom())
+    with pytest.raises(Exception) as e:
+        s3.put("projects/p/files/f/original/a.pdf", b"x")
+    assert "InvalidArgument" in str(e.value)
+    register(client)
+    p = client.post("/api/projects", json={"name": "P"}).json()["project"]
+    monkeypatch.setattr(get_storage(), "put", lambda *a, **k: s3.put("projects/p/x.pdf", b"x"))
+    r = client.post(f"/api/projects/{p['id']}/files", files=[("files", ("a.csv", b"a,b\n1,2\n", "text/csv"))])
+    assert r.status_code == 503 and "InvalidArgument" in r.json()["error"]["why"]
+
+
+def test_exact_live_failing_pdf_name_uploads(client):
+    """Regression for the live error: 'OptiChoice - Google Ads Report - Oct 2026.pdf' was an invalid storage key."""
+    import io
+
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    cv = canvas.Canvas(buf)
+    cv.drawString(72, 720, "Google Ads Report October 2026. Clicks 1200, Spend 450, Conversions 36.")
+    cv.save()
+    register(client)
+    p = client.post("/api/projects", json={"name": "P"}).json()["project"]
+    name = "OptiChoice - Google Ads Report - Oct 2026.pdf"
+    r = client.post(f"/api/projects/{p['id']}/files", files=[("files", (name, buf.getvalue(), "application/pdf"))])
+    assert r.status_code == 201, r.text
+    f = client.get(f"/api/projects/{p['id']}/files").json()["files"][0]
+    assert f["original_name"] == name and f["status"] in ("processed", "needs_review"), f

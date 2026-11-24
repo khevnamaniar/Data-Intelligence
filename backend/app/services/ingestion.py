@@ -24,7 +24,17 @@ ROLE_CHOICES = {
 
 
 def file_key(project_id: str, file_id: str, safe_name: str) -> str:
-    return f"projects/{project_id}/files/{file_id}/original/{safe_name}"
+    """Storage path for an upload. The file's real name is kept in the database (shown to users and used
+    for downloads); the storage path only uses plain characters, so names with spaces, brackets or
+    accents are always accepted by every storage provider."""
+    import re
+
+    stem, dot, ext = safe_name.rpartition(".")
+    if not dot:
+        stem, ext = safe_name, ""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")[:100] or "file"
+    ext = re.sub(r"[^A-Za-z0-9]+", "", ext)[:10].lower()
+    return f"projects/{project_id}/files/{file_id}/original/{slug}{'.' + ext if ext else ''}"
 
 
 def guess_role(name: str, file_type: str) -> str:

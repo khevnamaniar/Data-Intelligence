@@ -141,3 +141,39 @@ def test_analysis_with_no_files_fails_gracefully(client):
     rid = client.post(f"/api/projects/{p['id']}/analyses", json={"mode": "quick"}).json()["run"]["id"]
     run = client.get(f"/api/projects/{p['id']}/analyses/{rid}").json()["run"]
     assert run["status"] == "failed" and run["errors"][0]["next"]
+
+
+def test_executive_dashboard(client, demo):
+    pid, run = demo
+    ex = run["executive"]
+    assert [t["label"] for t in ex["tiles"]] == ["Sources analysed", "Opportunities to validate", "Issues needing attention", "Evidence strength"]
+    assert len(ex["cards"]) == len(QUESTIONS)  # one plain-language card per question asked
+    fids = {f["id"] for f in run["findings"]}
+    for c in ex["cards"]:
+        assert c["headline"] and c["status"] in ("positive", "watch", "action", "insufficient", "info")
+        assert set(c["finding_ids"]) <= fids  # every card links back to evidence
+        assert "R²" not in c["headline"] + c["summary"] and "HHI" not in c["summary"]
+    strategy = next(c for c in ex["cards"] if "strategy" in c["question"])
+    assert strategy["status"] == "action" and "TV" in strategy["headline"] and "Collagen" in strategy["headline"]
+    potential = next(c for c in ex["cards"] if "potential" in c["question"])
+    assert potential["kpi"] and potential["kpi"]["value"].startswith("+")
+    rep = client.post(f"/api/projects/{pid}/reports", json={"run_id": run["id"]}).json()["report"]
+    import docx as _docx
+    import openpyxl
+
+    d = _docx.Document(io.BytesIO(client.get(f"/api/projects/{pid}/reports/{rep['id']}/export/docx").content))
+    assert any(p.text == "Executive Dashboard" for p in d.paragraphs)
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/projects/{pid}/reports/{rep['id']}/export/xlsx").content))
+    assert wb.sheetnames[:2] == ["Summary", "Executive Dashboard"]
+    pdf = client.get(f"/api/projects/{pid}/reports/{rep['id']}/export/pdf").content
+    assert pdf[:4] == b"%PDF"
+
+
+def test_executive_dashboard_unanswerable_question(client):
+    register(client)
+    p = client.post("/api/projects", json={"name": "P"}).json()["project"]
+    client.post(f"/api/projects/{p['id']}/files", files=[("files", ("s.csv", b"Month,Revenue\n2024-01,10\n2024-02,12\n2024-03,15\n2024-04,18\n", "text/csv"))])
+    rid = client.post(f"/api/projects/{p['id']}/analyses", json={"mode": "quick", "questions": ["How many employees left last year?"], "auto_discover": False}).json()["run"]["id"]
+    ex = client.get(f"/api/projects/{p['id']}/analyses/{rid}").json()["run"]["executive"]
+    card = ex["cards"][0]
+    assert card["status"] == "insufficient" and "can't answer" in card["headline"] and card["next_step"].startswith("Provide")

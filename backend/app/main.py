@@ -114,7 +114,7 @@ async def on_storage_error(request: Request, exc: StorageError):
                 "next": "Upload a smaller file, or delete older files or projects to free space.", "code": "storage_quota"}
         return JSONResponse({"error": info}, status_code=507)
     info = {"what": "The file storage service could not complete the request.",
-            "why": "The storage service is unavailable or not configured correctly.",
+            "why": f"The storage service is unavailable or not configured correctly. Details: {exc}",
             "next": "Try again shortly. If it keeps happening, contact the administrator.", "code": "storage_unavailable"}
     return JSONResponse({"error": info}, status_code=503)
 
