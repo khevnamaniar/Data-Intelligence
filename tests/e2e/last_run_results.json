@@ -1,0 +1,200 @@
+[
+  {
+    "n": 1,
+    "label": "Application starts",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 2,
+    "label": "Create an account",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 3,
+    "label": "Create a project",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 4,
+    "label": "Upload multiple files",
+    "pass": true,
+    "extra": "(9 files)"
+  },
+  {
+    "n": 5,
+    "label": "Upload CSV",
+    "pass": true,
+    "extra": "→ 1 table(s), 0 text block(s)"
+  },
+  {
+    "n": 6,
+    "label": "Upload XLSX",
+    "pass": true,
+    "extra": "→ 1 table(s), 0 text block(s)"
+  },
+  {
+    "n": 7,
+    "label": "Upload PDF",
+    "pass": true,
+    "extra": "→ 2 table(s), 12 text block(s)"
+  },
+  {
+    "n": 8,
+    "label": "Upload DOCX",
+    "pass": true,
+    "extra": "→ 0 table(s), 15 text block(s)"
+  },
+  {
+    "n": 9,
+    "label": "Upload PPTX",
+    "pass": true,
+    "extra": "→ 1 table(s), 9 text block(s)"
+  },
+  {
+    "n": 10,
+    "label": "Upload an image",
+    "pass": true,
+    "extra": "→ 1 table(s), 4 text block(s)"
+  },
+  {
+    "n": 11,
+    "label": "Add multiple learning questions",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 12,
+    "label": "Select Deep Analysis",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 13,
+    "label": "Run analysis",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 14,
+    "label": "See trends",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 15,
+    "label": "See comparisons",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 16,
+    "label": "See gaps",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 17,
+    "label": "See opportunities",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 18,
+    "label": "See marketing insights",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 19,
+    "label": "See ROAS analysis",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 20,
+    "label": "See strategy/change analysis",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 21,
+    "label": "See potential implications",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 22,
+    "label": "See confidence levels",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 23,
+    "label": "Trace findings back to source data",
+    "pass": true,
+    "extra": "→ Source: strategy_2026_proposed.docx › section 'Portfolio priorities' › paragraph 3Launch a Magnesi"
+  },
+  {
+    "n": 24,
+    "label": "See automatically generated questions",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 25,
+    "label": "Ask a follow-up question",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 26,
+    "label": "Generate a report",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 27,
+    "label": "Export PDF",
+    "pass": true,
+    "extra": "(1389 KB, Consumer Health Market Analysis _ Analysis Report.pdf)"
+  },
+  {
+    "n": 28,
+    "label": "Export DOCX",
+    "pass": true,
+    "extra": "(1148 KB, Consumer Health Market Analysis _ Analysis Report.docx)"
+  },
+  {
+    "n": 29,
+    "label": "Export XLSX",
+    "pass": true,
+    "extra": "(302 KB, Consumer Health Market Analysis _ Analysis Report.xlsx)"
+  },
+  {
+    "n": 30,
+    "label": "Delete a file",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 32,
+    "label": "Project isolation between users",
+    "pass": true,
+    "extra": "(other user's API call → 404)"
+  },
+  {
+    "n": 31,
+    "label": "Delete a project",
+    "pass": true,
+    "extra": ""
+  },
+  {
+    "n": 0,
+    "label": "No browser JavaScript errors",
+    "pass": true,
+    "extra": ""
+  }
+]
