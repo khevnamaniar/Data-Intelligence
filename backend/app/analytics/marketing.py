@@ -43,7 +43,7 @@ def analyse_marketing(pdata: ProjectData, mode: str) -> list[Finding]:
         cur = ds.unit(ds.first("spend")) or ds.unit(ds.first("revenue") or "")
         has_rev = bool(ds.first("revenue"))
         tot = _ratio_table(ds, []).iloc[0]
-        dims = [d for d in ds.dims(max_levels=40, limit=5) if ds.role(d) in ("channel", "campaign", "product", "category", "geography", "customer_segment", "brand", "dimension")]
+        dims = [d for d in ds.dims(max_levels=40, limit=5) if ds.role(d) in ("channel", "campaign", "keyword", "device", "product", "category", "geography", "customer_segment", "brand", "dimension")]
         # ---- overall KPI summary
         kpis = []
         for name, (_, _, _, unit, _) in RATIO_DEFS.items():

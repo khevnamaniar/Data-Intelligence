@@ -215,8 +215,11 @@ def process_file(file_id: str) -> dict:
         extraction = {"tables": len(result.tables), "chunks": len(result.chunks), "chunk_kinds": kinds,
                       "datasets": datasets_summary, "warnings": result.warnings, "metadata": result.metadata,
                       "quality_issues": issue_count}
-        c.update("files", file_id, {"status": result.status, "extraction_json": extraction,
-                                    "error_json": result.errors or None, "updated_at": now()})
+        upd = {"status": result.status, "extraction_json": extraction, "error_json": result.errors or None, "updated_at": now()}
+        period = (result.metadata or {}).get("report_period")
+        if period and not (f.get("period_label") or "").strip():
+            upd["period_label"] = period["label"][:100]  # e.g. "Aug 2026", read from the report itself
+        c.update("files", file_id, upd)
     log.info("File %s processed: status=%s tables=%s text_blocks=%s issues=%s (%.1fs)", file_id[:8], result.status,
              len(result.tables), len(result.chunks), issue_count, _time.perf_counter() - t0)
     return {"status": result.status, "extraction": extraction, "errors": result.errors}

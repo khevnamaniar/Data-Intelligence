@@ -48,6 +48,8 @@ ROLE_PATTERNS: list[tuple[str, str]] = [
 DIM_PATTERNS: list[tuple[str, str]] = [
     ("time", r"^(date|day|week|month|quarter|year|period|fy|fiscal year|time|reporting period|month year)$|\b(date|month|quarter|year|period)\b"),
     ("campaign", r"campaign|ad set|adset|creative"),
+    ("keyword", r"keyword|search term|search query|\bquer(y|ies)\b"),
+    ("device", r"\bdevices?\b|device type|operating system|\bbrowser\b"),
     ("channel", r"channel|platform|media|medium|\bsource\b|network|publisher|touchpoint"),
     ("customer_segment", r"customer|audience|persona|age|gender|demographic|cohort|shopper"),
     ("company", r"competitor|company|manufacturer|vendor|supplier|player|owner|advertiser|retailer"),

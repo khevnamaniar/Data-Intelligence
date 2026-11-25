@@ -91,8 +91,11 @@ def period_comparison(ds: DatasetView, mode: str) -> list[Finding]:
                      "x_label": d, "y_label": m, "unit": unit, "categories": cats,
                      "series": [{"name": str(a), "values": [float(va.get(c)) if pd.notna(va.get(c)) else None for c in g.index if str(c) in cats]},
                                 {"name": str(b), "values": [float(vb.get(c)) if pd.notna(vb.get(c)) else None for c in g.index if str(c) in cats]}]}
-            tot_a = float(va.sum()) if agg == "sum" else float(va.mean())
-            tot_b = float(vb.sum()) if agg == "sum" else float(vb.mean())
+            if agg == "sum":  # totals over all rows, including any not broken down by this dimension
+                tot_a = float(ds.df.loc[(labels == a).to_numpy(), m].sum())
+                tot_b = float(ds.df.loc[(labels == b).to_numpy(), m].sum())
+            else:
+                tot_a, tot_b = float(va.mean()), float(vb.mean())
             spread = max(changes.values()) - min(changes.values())
             out.append(Finding(
                 category="comparison", title=f"{a} vs {b}: {m} by {d}",
@@ -124,7 +127,10 @@ def segment_comparison(ds: DatasetView, mode: str) -> list[Finding]:
             g = ds.df.groupby(d)[m].sum(min_count=1).dropna().sort_values(ascending=False)
             if len(g) < 3 or g.sum() <= 0:
                 continue
+            full_total = float(ds.df[m].sum())
             sh = share_table(g)
+            if full_total > float(g.sum()) * 1.001:  # some rows are not broken down by this dimension
+                sh = g / full_total * 100
             h = hhi(sh)
             top, top_share = str(g.index[0]), float(sh.iloc[0])
             top2 = float(sh.iloc[:2].sum())
@@ -133,7 +139,9 @@ def segment_comparison(ds: DatasetView, mode: str) -> list[Finding]:
             chart = {"type": "bar", "title": f"{m} by {d}", "question": f"Which {d} contributes most to {m}?",
                      "x_label": d, "y_label": m, "unit": unit, "categories": [str(i) for i in g.index[:12]],
                      "series": [{"name": m, "values": [float(v) for v in g.values[:12]]}]}
-            fact = (f"'{top}' accounts for {top_share:.1f}% of total {m} ({fmt_num(float(g.iloc[0]), unit)} of {fmt_num(float(g.sum()), unit)}); "
+            unlisted = 100 - float(sh.sum())
+            fact = (f"'{top}' accounts for {top_share:.1f}% of total {m} ({fmt_num(float(g.iloc[0]), unit)} of {fmt_num(max(full_total, float(g.sum())), unit)}"
+                    + (f"; {unlisted:.0f}% is in rows the source does not break down by {d}" if unlisted >= 0.5 else "") + "); "
                     f"the top two {d} values account for {top2:.1f}%. There are {len(g)} {d} values (an even split would be {even:.1f}% each). "
                     f"Concentration index (HHI) = {h:.2f}.")
             out.append(Finding(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from collections import Counter
 from typing import Callable
@@ -23,6 +24,55 @@ log = logging.getLogger("dip.pipeline")
 
 STAGES = ["Loading data", "Trend analysis", "Comparisons", "Marketing & ROAS", "Opportunities", "Documents & strategy",
           "Anomalies & relationships", "Gap analysis", "Impact analysis", "Research gaps", "Ranking insights", "Answering questions"]
+
+
+def _finding_dimensions(f: Finding) -> set[str]:
+    dims = set()
+    if f.details.get("dimension"):
+        dims.add(str(f.details["dimension"]))
+    for rec in (f.records or {}).values():
+        for r in rec if isinstance(rec, list) else [rec]:
+            if isinstance(r, dict):
+                for d in (r.get("dimension"), (r.get("details") or {}).get("dimension") if isinstance(r.get("details"), dict) else None):
+                    if d:
+                        dims.add(str(d))
+    return dims
+
+
+def _tag_dimension_roles(findings: list[Finding], pdata: ProjectData) -> None:
+    """Tag findings with the meaning of the column they are broken down by (e.g. role:device) for question matching."""
+    for f in findings:
+        dims = _finding_dimensions(f)
+        if not dims:
+            continue
+        for e in f.evidence:
+            ds = pdata.dataset(e.dataset_id) if e.dataset_id else None
+            if ds:
+                for d in dims:
+                    r = ds.role(d)
+                    if r and f"role:{r}" not in f.tags:
+                        f.tags.append(f"role:{r}")
+
+
+def _merge_same_title(findings: list[Finding]) -> list[Finding]:
+    """Several tables of one report often show the same total (e.g. clicks in the overview, the daily chart and the
+    device chart). Keep one finding and attach the other tables as corroborating evidence."""
+    by_title: dict[tuple, Finding] = {}
+    out = []
+    for f in sorted(findings, key=lambda x: (-len(x.evidence), -x.magnitude)):
+        k = (f.category, re.sub(r"(\d+)\.\d+", r"\1", f.title.strip().lower()))
+        keep = by_title.get(k)
+        if keep is None:
+            by_title[k] = f
+            out.append(f)
+            continue
+        seen = {(e.dataset_id, e.chunk_id) for e in keep.evidence}
+        for e in f.evidence:
+            if (e.dataset_id, e.chunk_id) not in seen and len(keep.evidence) < 6:
+                keep.evidence.append(e)
+        if not f.approximate and keep.approximate:
+            keep.approximate = False
+    return out
 
 
 def run_pipeline(pdata: ProjectData, mode: str, questions: list[str], auto_discover: bool,
@@ -74,12 +124,13 @@ def run_pipeline(pdata: ProjectData, mode: str, questions: list[str], auto_disco
     findings = trend_f + comp_f + mkt_f + opp_f + rep_f + doc_f + anom_f + gap_f + impact_f
     # quality-driven limitation findings
     findings += _quality_findings(pdata)
+    _tag_dimension_roles(findings, pdata)
     # de-duplicate
     uniq: dict[str, Finding] = {}
     for f in findings:
         if f.key not in uniq or f.magnitude > uniq[f.key].magnitude:
             uniq[f.key] = f
-    findings = list(uniq.values())
+    findings = _merge_same_title(list(uniq.values()))
     progress(int(5 + 85 * 10 / len(STAGES)), STAGES[10])
     findings = rank_findings(findings, all_questions + auto_qs)
     if mode == "quick":

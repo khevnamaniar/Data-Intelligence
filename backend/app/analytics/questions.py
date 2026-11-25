@@ -12,13 +12,15 @@ INTENTS = {
     "gap": r"\bgaps?\b|missing|whitespace|white space|unserved|under-?served|lack",
     "opportunity": r"opportunit|potential|usp|unique selling|whitespace|launch|untapped|room to grow",
     "product": r"product|portfolio|sku|range|categor",
-    "marketing": r"marketing|media|campaign|advert|\bads?\b|channel|spend|ctr|cpc|cpm|cpa",
+    "marketing": r"marketing|media|campaign|advert|\bads?\b|channel|spend|ctr|cpc|cpm|cpa|invest|budget|keyword",
     "roas": r"roas|return on ad|efficien|driven by|driver",
     "strategy": r"strateg|plan|proposed|future strategy|previous strategy|taken forward|carry forward|reconsider",
     "risk": r"risk|threat|danger|exposure|vulnerab",
     "impact": r"continue|what could happen|implicat|impact|repercussion|future|forecast|if this",
     "research": r"investigat|research|next|find out|unknown|validate|should we look",
-    "customer": r"customer|consumer|audience|shopper|segment",
+    "customer": r"customer|consumer|audience|shopper|segment|demographic|age group|\bages?\b|gender|who (is|are)",
+    "keyword": r"keyword|search term|search quer",
+    "device": r"device|mobile|desktop|tablet|computer",
     "geography": r"region|country|market|geograph|city|territor",
     "pricing": r"pric",
     "competition": r"compet|rival|brand",
@@ -44,6 +46,8 @@ DATA_NEEDED = {
     "opportunity": "a product/competitor list with category, and demand indicators (sales by period, market size or growth)",
     "strategy": "a strategy or plan document, plus performance data to compare it with",
     "customer": "data broken down by customer or audience segment",
+    "keyword": "performance broken down by search keyword",
+    "device": "performance broken down by device",
     "geography": "data broken down by region or market",
     "pricing": "product prices",
     "competition": "competitor/brand data",
@@ -68,12 +72,20 @@ PRIMARY = {"gap": {"gap"}, "opportunity": {"opportunity"}, "trend": {"trend"}, "
            "anomaly": {"anomaly"}, "product": {"opportunity"}}
 
 
+INTENT_ROLES = {"customer": {"customer_segment"}, "keyword": {"keyword"}, "device": {"device"}, "geography": {"geography"},
+                "competition": {"company", "brand"}, "product": {"product", "category"},
+                "marketing": {"campaign", "channel", "keyword"}}
+
+
 def relevance(f: Finding, intents: list[str], terms: set[str]) -> float:
     cat_int = CATEGORY_INTENTS.get(f.category, set())
     tagset = set(t for t in f.tags if t)
     s = 0.0
-    if set(intents) & (cat_int | tagset):
+    role_hit = any(f"role:{r}" in tagset for i in intents for r in INTENT_ROLES.get(i, ()))
+    if set(intents) & (cat_int | tagset) or role_hit:
         s += 0.5
+    if role_hit:  # "which keywords / devices / audiences…" -> findings broken down that way come first
+        s += 0.25
     if any(f.category in PRIMARY.get(i, set()) for i in intents):
         s += 0.2
     text_terms = _terms(" ".join([f.title] + list(tagset)))

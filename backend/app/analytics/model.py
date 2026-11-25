@@ -17,7 +17,7 @@ CURRENCY_SIGN = {"GBP": "£", "USD": "$", "EUR": "€", "INR": "₹", "JPY": "¥
 MEASURE_PRIORITY = ["revenue", "roas", "spend", "market_size", "units", "conversions", "market_share", "growth", "margin",
                     "actual", "plan", "clicks", "impressions", "reach", "price", "rating", "cpa", "cpc", "ctr", "cvr", "cpm",
                     "search_volume", "count", "competitor_count", "engagement", "frequency", "measure"]
-DIM_PRIORITY = ["category", "product", "channel", "brand", "company", "geography", "campaign", "customer_segment",
+DIM_PRIORITY = ["category", "product", "channel", "brand", "company", "geography", "campaign", "keyword", "customer_segment", "device",
                 "attribute", "department", "dimension", "scenario"]
 
 

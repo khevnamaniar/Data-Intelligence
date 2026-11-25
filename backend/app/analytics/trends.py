@@ -202,6 +202,14 @@ def _measure_trends(ds, m, periods, gran, incomplete, dims, mode) -> list[Findin
                 share_last = share_table(piv.iloc[-1].fillna(0))
                 share_span = (piv.index[0], piv.index[-1])
                 total_change_override = None
+                if bool((ds.df[d].isna() & ds.df[m].notna()).any()):
+                    # some rows are not broken down by this dimension (e.g. "other keywords"): shares of the full total
+                    full = ds.df.groupby(periods)[m].sum(min_count=1)
+                    f0, f1 = full.get(piv.index[0]), full.get(piv.index[-1])
+                    if f0 and f1:
+                        share_first = piv.iloc[0].fillna(0) / float(f0) * 100
+                        share_last = piv.iloc[-1].fillna(0) / float(f1) * 100
+                        total_change_override = float(f1) - float(f0)
             base_share = share_table(totals)
             eligible = [l for l in level_stats if base_share.get(l, 0) >= 3]
         else:
