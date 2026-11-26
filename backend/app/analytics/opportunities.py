@@ -59,6 +59,8 @@ def analyse_opportunities(pdata: ProjectData, mode: str) -> list[Finding]:
     for ds in pdata.datasets:
         seg = _segment_dim(ds)
         comp, prod = _entity_dims(ds)
+        if comp and ds.df[comp].nunique(dropna=True) < 2:
+            comp = None  # a single supplier/brand is not a competitive landscape
         explicit_count = ds.first("competitor_count")
         if not seg or not (comp or explicit_count or (prod and ds.file_role == "competitor_data")):
             continue  # competition needs competitor/brand information, not just our own product list

@@ -1,6 +1,8 @@
 """In-memory representation of a project's data and of analysis findings."""
 from __future__ import annotations
 
+import re
+
 import hashlib
 import math
 from dataclasses import dataclass, field
@@ -87,6 +89,7 @@ class DatasetView:
     df: pd.DataFrame
     columns: dict[str, Column]
     period_groups: dict = field(default_factory=dict)
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     # -------- helpers
     def cols(self, *roles: str, dtype: str | None = None) -> list[str]:
@@ -108,9 +111,35 @@ class DatasetView:
 
     def measures(self, limit: int = 8) -> list[str]:
         ms = [c for c in self.columns.values() if c.dtype == "numeric" and c.role not in ("flag", "time", "identifier")
-              and not c.period_group]
+              and not c.period_group and c.name not in self.duplicate_measures()]
         ms.sort(key=lambda c: MEASURE_PRIORITY.index(c.role) if c.role in MEASURE_PRIORITY else 99)
         return [c.name for c in ms[:limit]]
+
+    def duplicate_measures(self) -> set[str]:
+        """Numeric columns that repeat another column's numbers (e.g. 'Cost (each)' and 'Total' when every quantity is 1).
+        Analysing both only repeats every finding; the 'total' column is kept."""
+        if "dups" in self._cache:
+            return self._cache["dups"]
+        order = list(self.columns)
+        cands = [c for c in self.columns.values() if c.dtype == "numeric" and c.role not in ("flag", "time", "identifier")
+                 and not c.period_group and c.name in self.df.columns]
+        cands.sort(key=lambda c: (0 if re.search(r"\btotal\b", c.name, re.I) else 1,
+                                  MEASURE_PRIORITY.index(c.role) if c.role in MEASURE_PRIORITY else 99, order.index(c.name)))
+        kept, dups = [], set()
+        for c in cands:
+            col = self.df[c.name]
+            same = False
+            for k in kept:
+                both = pd.concat([col, self.df[k]], axis=1).dropna()
+                if len(both) >= 3 and (both.iloc[:, 0] == both.iloc[:, 1]).mean() >= 0.98 and col.notna().sum() <= self.df[k].notna().sum():
+                    same = True
+                    break
+            if same:
+                dups.add(c.name)
+            else:
+                kept.append(c.name)
+        self._cache["dups"] = dups
+        return dups
 
     def dims(self, max_levels: int = 25, min_levels: int = 2, limit: int = 5) -> list[str]:
         ds = [c for c in self.columns.values() if c.dtype in ("categorical", "boolean") and min_levels <= c.distinct <= max_levels]

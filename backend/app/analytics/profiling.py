@@ -63,7 +63,13 @@ DIM_PATTERNS: list[tuple[str, str]] = [
 ]
 DATE_ATTRIBUTE_RE = re.compile(r"launch|start|end|birth|created|opened|joined|due|expir|founded|hire|listing|introduc")
 YEAR_TOKEN_RE = re.compile(r"(?<!\d)(?:fy\s?)?((?:19|20)\d{2})(?!\d)", re.I)
-PERIOD_HEADER_RE = re.compile(r"^\s*(?:fy\s?)?(?:19|20)\d{2}\s*$|^\s*q[1-4][\s\-']*(?:19|20)?\d{2}\s*$|^\s*(?:19|20)\d{2}[\s\-]*q[1-4]\s*$", re.I)
+PERIOD_HEADER_RE = re.compile(
+    r"^\s*(?:fy\s?)?(?:19|20)\d{2}\s*$|^\s*q[1-4][\s\-']*(?:19|20)?\d{2}\s*$|^\s*(?:19|20)\d{2}[\s\-]*q[1-4]\s*$"
+    r"|^\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?[\s\-'/.,]*(?:19|20)?\d{2}\s*$"
+    r"|^\s*(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])(?:[-/.]0?1)?\s*$|^\s*(?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\s*$", re.I)
+TOTAL_COL_RE = re.compile(r"^\s*(grand\s+)?(total|totals|sum|ytd|fytd|full\s+year|annual|fy\s+total|year\s+total|average|avg)\s*$", re.I)
+TOTAL_ROW_RE = re.compile(r"^\s*((grand|sub)[\s-]*)?totals?\s*:?\s*$|^.{1,60}\s(sub[\s-]?)?totals?\s*:?\s*$|^totals?\s+(for|of|all)\b"
+                          r"|^(overall|all\s+(regions|products|stores|items|countries|channels))\s*$", re.I)
 ADDITIVE_ROLES = {"spend", "revenue", "units", "impressions", "reach", "clicks", "conversions", "engagement", "count",
                   "market_size", "search_volume", "plan", "actual", "competitor_count", "measure"}
 RATE_ROLES = {"roas", "ctr", "cpc", "cpm", "cpa", "cvr", "frequency", "growth", "market_share", "price", "margin", "rating"}
@@ -108,10 +114,13 @@ def parse_numeric(value) -> tuple[float | None, dict]:
     if isinstance(value, (int, float, np.integer, np.floating)):
         f = float(value)
         return (None, {}) if np.isnan(f) else (f, {})
-    s = str(value).strip()
-    if s == "" or s.lower() in {"na", "n/a", "nan", "none", "null", "-", "—", "–", "#n/a", "n.a.", "tbc", "?"}:
+    s = str(value).strip().replace("\u00a0", " ").replace("\u202f", " ")
+    if s == "" or s.lower() in {"na", "n/a", "nan", "none", "null", "-", "—", "–", "#n/a", "n.a.", "tbc", "?"} or \
+            re.fullmatch(r"#(div/0!|n/a|ref!|value!|name\?|num!|null!|spill!|calc!)", s.lower()):
         return None, {"missing_token": s}
-    s2 = _NUM_CLEAN.sub("", s.replace(" ", "")) if re.search(r"\d", s) else s
+    if re.fullmatch(r"[^-]*\d[\d,.' ]*-", s):  # trailing minus (accounting exports): "1,234-"
+        s = "-" + s[:-1]
+    s2 = _NUM_CLEAN.sub("", s.replace(" ", "").replace("'", "")) if re.search(r"\d", s) else s
     m = _NUM_RE.match(s2)
     if not m:
         return None, {"unparsed": True}
@@ -141,7 +150,9 @@ _DATE_PATTERNS = [
 ]
 
 
-def date_pattern(s: str) -> str | None:
+def date_pattern(s) -> str | None:
+    if not isinstance(s, str):
+        return None
     s = s.strip()
     for name, rx in _DATE_PATTERNS:
         if rx.match(s):
@@ -159,6 +170,28 @@ def _parse_quarter(s: str):
     return pd.Timestamp(year=y, month=3 * (q - 1) + 1, day=1)
 
 
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+_MONTH_YY_RE = re.compile(r"([A-Za-z]{3,9})\.?[\s\-'/.,]*((?:19|20)?\d{2})")
+
+
+def _umap(series: pd.Series, fn) -> pd.Series:
+    """series.map(fn), computing fn once per distinct value (columns repeat values a lot: 150k rows, 700 dates)."""
+    try:
+        cache: dict = {}
+        out = []
+        for v in series:
+            try:
+                r = cache[v]
+            except KeyError:
+                r = cache[v] = fn(v)
+            except TypeError:  # unhashable
+                r = fn(v)
+            out.append(r)
+        return pd.Series(out, index=series.index, dtype=object)
+    except Exception:
+        return series.map(fn)
+
+
 def parse_dates(series: pd.Series) -> tuple[pd.Series, dict]:
     """Parse a column of date-like strings. Returns (datetime series, info)."""
     raw = series.dropna()
@@ -166,32 +199,53 @@ def parse_dates(series: pd.Series) -> tuple[pd.Series, dict]:
         return pd.Series(pd.NaT, index=series.index), {}
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce"), {"patterns": ["native"]}
-    strs = series.map(lambda v: None if v is None or (isinstance(v, float) and np.isnan(v)) else
-                      (v.isoformat() if hasattr(v, "isoformat") else str(v).strip()))
-    patterns = Counter(p for p in (date_pattern(s) for s in strs.dropna()) if p)
+    strs = pd.Series([None if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NA or v is pd.NaT else
+                      (v.isoformat() if hasattr(v, "isoformat") else str(v).strip()) for v in series],
+                     index=series.index, dtype=object)
+    uniq = list(dict.fromkeys(strs.dropna()))
+    pat_of = {u: date_pattern(u) for u in uniq}
+    counts = Counter(strs.dropna())
+    patterns = Counter()
+    for u, p in pat_of.items():
+        if p:
+            patterns[p] += counts[u]
     dayfirst = False
-    slash = strs.dropna()[strs.dropna().map(lambda s: date_pattern(s) == "slash_dmy_or_mdy")]
+    slash = pd.Series([u for u in uniq if pat_of[u] == "slash_dmy_or_mdy"], dtype=object)
     if not slash.empty:
         firsts = slash.str.split(r"[/.\-]").map(lambda p: int(p[0]))
         seconds = slash.str.split(r"[/.\-]").map(lambda p: int(p[1]))
         dayfirst = bool((firsts > 12).any() and not (seconds > 12).any())
+    memo: dict = {}
     out = []
     for s in strs:
-        if s is None:
+        if not isinstance(s, str):
             out.append(pd.NaT)
             continue
-        p = date_pattern(s)
+        if s in memo:
+            out.append(memo[s])
+            continue
+        n_before = len(out)
+        p = pat_of.get(s) if s in pat_of else date_pattern(s)
         if p == "quarter":
             out.append(_parse_quarter(s))
         elif p == "year":
             out.append(pd.Timestamp(year=int(s), month=1, day=1))
+        elif (mm := _MONTH_YY_RE.fullmatch(s)) and mm.group(1)[:3].lower() in _MONTHS:
+            # "Jan-26", "Sep '25", "March 2026" (otherwise read as 26 January of year 1)
+            y = int(mm.group(2))
+            y = y if y > 99 else (2000 + y if y < 70 else 1900 + y)
+            out.append(pd.Timestamp(year=y, month=_MONTHS[mm.group(1)[:3].lower()], day=1))
         else:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
-                    out.append(pd.to_datetime(s, dayfirst=dayfirst, errors="coerce"))
+                    out.append(pd.to_datetime(s, dayfirst=dayfirst, errors="coerce", format="ISO8601" if p == "iso" else None))
                 except Exception:
                     out.append(pd.NaT)
+        if len(out) > n_before:
+            memo[s] = out[-1]
+    out = [v if (v is not pd.NaT and v is not None and not (isinstance(v, float)) and 1800 <= getattr(v, "year", 0) <= 2200) else pd.NaT
+           for v in out]  # nonsense years (e.g. a code read as a date) are not dates
     parsed = pd.Series(out, index=series.index, dtype="datetime64[ns]")
     granularity = ""
     if patterns:
@@ -255,9 +309,135 @@ def _rows_label(rows: list[int], limit: int = 8) -> str:
     return shown + (f" … (+{len(rows) - limit} more)" if len(rows) > limit else "")
 
 
+_PLACEHOLDERS = {"", "0", "0.0", "-", "–", "—", "n/a", "na", "none", "null", "nan", "$0", "$0.00", "0%"}
+ID_NAME_RE = re.compile(r"^\S.*\s(id|code|sku|ref|reference|number|no\.?|num|#)$")
+
+
+def _informative(v) -> bool:
+    if v is None or v is pd.NaT or v is pd.NA:
+        return False
+    try:
+        if pd.isna(v):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        return not (np.isnan(float(v)) or float(v) == 0)
+    return str(v).strip().lower() not in _PLACEHOLDERS
+
+
+def _small_number(v) -> bool:
+    f, _ = parse_numeric(v)
+    return f is None or f in (0.0, 1.0)
+
+
+def drop_template_rows(raw: pd.DataFrame, rows: list[int]) -> tuple[pd.DataFrame, list[int], int]:
+    """Planner/order forms often contain many unused rows that hold only formula defaults (0, 1, '-', a
+    'Check Qty Column' warning). They are not data: ignore them when the sheet also has properly filled rows."""
+    ncols = raw.shape[1]
+    if ncols < 8 or len(raw) < 6:
+        return raw, rows, 0
+    flags = pd.DataFrame({i: _umap(raw.iloc[:, i].astype(object), _informative).astype(bool).to_numpy() for i in range(ncols)})
+    info = flags.sum(axis=1).to_numpy()
+    full = int((info >= 0.5 * ncols).sum())
+    if full < 3:
+        return raw, rows, 0
+    limit = max(2, int(0.15 * ncols))
+    vals = raw.astype(object).to_numpy()
+    drop = [i for i in np.nonzero(info <= limit)[0]
+            if all(_small_number(v) for v in vals[i] if _informative(v) and parse_numeric(v)[0] is not None)]
+    if not drop:
+        return raw, rows, 0
+    keep = [i for i in range(len(raw)) if i not in set(drop)]
+    return raw.iloc[keep].reset_index(drop=True), [rows[i] for i in keep], len(drop)
+
+
+def drop_total_rows(raw: pd.DataFrame, rows: list[int]) -> tuple[pd.DataFrame, list[int], int]:
+    """Rows labelled 'Total', 'Grand Total', 'North Total', 'Subtotal' repeat the sum of other rows."""
+    if len(raw) < 3:
+        return raw, rows, 0
+    hit = np.zeros(len(raw), dtype=bool)
+    for i in range(min(raw.shape[1], 4)):  # labels sit in the first columns
+        hit |= _umap(raw.iloc[:, i].astype(object), lambda v: isinstance(v, str) and bool(TOTAL_ROW_RE.match(v))).astype(bool).to_numpy()
+    vals = raw.astype(object).to_numpy()
+    drop = [i for i in np.nonzero(hit)[0] if any(parse_numeric(v)[0] is not None for v in vals[i] if not isinstance(v, bool))]
+    if not drop or len(drop) > 0.4 * len(raw):
+        return raw, rows, 0
+    keep = [i for i in range(len(raw)) if i not in set(drop)]
+    return raw.iloc[keep].reset_index(drop=True), [rows[i] for i in keep], len(drop)
+
+
+def _present(v) -> bool:
+    if v is None or v is pd.NaT or v is pd.NA:
+        return False
+    if isinstance(v, float) and np.isnan(v):
+        return False
+    return str(v).strip() not in ("", "nan", "None", "NaT")
+
+
+def fill_group_labels(raw: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """'North' written once above six rows (merged or grouped cells) -> repeat it on each row of its group."""
+    filled = []
+    if len(raw) < 4:
+        return raw, filled
+    raw = raw.copy()
+    for col in list(raw.columns)[:2]:
+        s = raw[col].astype(object)
+        present = _umap(s, _present).astype(bool)
+        share_missing = 1 - present.mean()
+        if not present.iloc[0] or not (0.3 <= share_missing <= 0.95):
+            continue
+        if re.search(r"comment|note|remark|descr|detail|address", str(col), re.I):
+            continue
+        vals = s[present]
+        if _umap(vals, lambda v: isinstance(v, str) and len(v) <= 40 and parse_numeric(v)[0] is None).astype(bool).mean() < 0.9:
+            continue
+        others = raw.drop(columns=[col]).astype(object)
+        rest_filled = others.apply(lambda r: sum(1 for v in r if _present(v)), axis=1)
+        if (rest_filled[~present] >= 1).mean() < 0.9:  # rows without a label must still hold data
+            continue
+        raw[col] = s.where(present).ffill()
+        filled.append(col)
+    return raw, filled
+
+
+def _sep_vote(v: str) -> int:
+    """+1: decimal comma (1.234,56), -1: decimal point (1,234.56), 0: can't tell (1,234 / 1.234)."""
+    core = re.sub(r"[^\d.,]", "", v)
+    if not core or not re.search(r"\d", core):
+        return 0
+    if "," in core and "." in core:
+        return 1 if core.rfind(",") > core.rfind(".") else -1
+    if "," in core:
+        after = len(core) - core.rfind(",") - 1
+        return 0 if (after == 3 and core.count(",") == 1) else (-1 if core.count(",") > 1 else 1)
+    if "." in core:
+        after = len(core) - core.rfind(".") - 1
+        return 1 if core.count(".") > 1 else (0 if after == 3 else -1)
+    return 0
+
+
+def decimal_comma_column(values: pd.Series) -> bool:
+    strs = [v for v in values.iloc[:3000] if isinstance(v, str) and re.search(r"\d", v)]
+    if len(strs) < 2:
+        return False
+    votes = [_sep_vote(v) for v in strs[:500]]
+    eu, us = votes.count(1), votes.count(-1)
+    return eu >= 1 and eu >= 3 * us
+
+
+def _from_decimal_comma(v):
+    if not isinstance(v, str):
+        return v
+    return v.replace(".", "").replace(" ", "").replace(",", ".")
+
+
 def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> NormalizedTable:
     raw = raw.copy()
     rows = row_numbers if row_numbers and len(row_numbers) == len(raw) else list(range(2, len(raw) + 2))
+    raw, rows, n_template = drop_template_rows(raw, rows)
+    raw, rows, n_totals = drop_total_rows(raw, rows)
+    raw, filled_down = fill_group_labels(raw)
     out = pd.DataFrame(index=raw.index)
     out[ROW_COL] = rows
     columns: list[ColumnMeta] = []
@@ -265,10 +445,20 @@ def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> 
     issues: list[dict] = []
     used_names: set[str] = set()
     n = len(raw)
+    if n_totals:
+        transformations.append({"field": "(rows)", "action": "set aside total rows",
+                                "detail": f"{n_totals} total/subtotal row(s) were left out so figures are not counted twice"})
+    for col in filled_down:
+        transformations.append({"field": str(col), "action": "filled down group labels",
+                                "detail": "labels written once per group (e.g. merged cells) were repeated on each row of the group"})
+    if n_template:
+        transformations.append({"field": "(rows)", "action": "ignored unused template rows",
+                                "detail": f"{n_template} row(s) held only blanks or default values (such as 0, 1, '-' or a check message)"})
     for pos, col in enumerate(raw.columns):
-        s = raw[col]
+        # plain Python values: pandas 3 text columns would otherwise turn "missing" into NaN floats
+        s = raw[col].astype(object)
         # treat blank strings as missing
-        s = s.map(lambda v: None if (v is None or (isinstance(v, str) and v.strip() == "") or
+        s = _umap(s, lambda v: None if (v is None or (isinstance(v, str) and v.strip() == "") or
                                      (isinstance(v, float) and np.isnan(v))) else v)
         name = _norm_colname(col) or f"Column {pos + 1}"
         base, k = name, 2
@@ -287,16 +477,31 @@ def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> 
             issues.append(_issue("missing_values", name, "medium", f"Column '{name}' is completely empty.",
                                  "Remove the column or supply the missing data."))
             continue
-        # --- numeric?
-        parsed = nonnull.map(parse_numeric)
+        # --- numeric? (European exports write 1.234,56)
+        if decimal_comma_column(nonnull) and date_pattern(str(nonnull.iloc[0])) is None:
+            conv = _umap(nonnull, _from_decimal_comma)
+            if _umap(conv, lambda v: parse_numeric(v)[0] is not None).astype(bool).mean() >= 0.85:
+                s = _umap(s, _from_decimal_comma)
+                nonnull = s.dropna()
+                transformations.append({"field": name, "action": "read decimal commas", "detail": "values like 1.234,56 read as 1234.56"})
+        parsed = _umap(nonnull, parse_numeric)
         values = parsed.map(lambda t: t[0])
         infos = parsed.map(lambda t: t[1])
         num_ok = values.notna().mean()
         lower = name.lower()
         looks_time_name = bool(re.search(r"\b(date|month|quarter|period|week|day)\b", lower)) or lower in {"year", "fy", "yr", "time"}
-        date_like_share = nonnull.map(lambda v: date_pattern(str(v)) is not None and date_pattern(str(v)) != "year").mean() \
+        date_like_share = _umap(nonnull, lambda v: date_pattern(str(v)) is not None and date_pattern(str(v)) != "year").astype(bool).mean() \
             if not pd.api.types.is_numeric_dtype(nonnull) else 0.0
-        is_native_dt = pd.api.types.is_datetime64_any_dtype(s) or nonnull.map(lambda v: hasattr(v, "year") and hasattr(v, "month") and not isinstance(v, (int, float))).mean() > 0.9
+        is_native_dt = pd.api.types.is_datetime64_any_dtype(s) or _umap(nonnull, lambda v: hasattr(v, "year") and hasattr(v, "month") and not isinstance(v, (int, float))).astype(bool).mean() > 0.9
+        if looks_time_name and not is_native_dt and num_ok >= 0.95 and not re.search(r"\byear\b|\bfy\b|\byr\b", lower):
+            nums = values.dropna()
+            if len(nums) and nums.between(20000, 80000).all() and (nums % 1 == 0).mean() >= 0.95:
+                # Excel stores dates as day numbers (45291 = 1 Jan 2024); shown as numbers when the cell format is lost
+                conv = pd.to_datetime(s.map(lambda v: parse_numeric(v)[0]), unit="D", origin="1899-12-30", errors="coerce")
+                s = conv.astype(object).where(conv.notna(), None)
+                nonnull = s.dropna()
+                is_native_dt = True
+                transformations.append({"field": name, "action": "read Excel day numbers as dates", "detail": "e.g. 45291 → 2024-01-01"})
         if is_native_dt or (date_like_share >= 0.8) or (looks_time_name and num_ok < 0.8 and date_like_share >= 0.5):
             parsed_dt, info = parse_dates(s)
             ok = parsed_dt.notna().sum() / max(len(nonnull), 1)
@@ -322,9 +527,16 @@ def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> 
                               "max": str(parsed_dt.max().date()) if parsed_dt.notna().any() else None}
                 columns.append(meta)
                 continue
+        if num_ok >= 0.85 and ID_NAME_RE.match(lower.strip()) and not re.match(r"^(number|no\.?|num|#)\s+of\b", lower.strip()) \
+                and all(float(parse_numeric(v)[0]).is_integer() for v in nonnull if parse_numeric(v)[0] is not None):
+            # "Item Number", "Package ID", "Activity No": codes, not amounts to add up
+            s = s.map(lambda v: None if v is None else (str(int(parse_numeric(v)[0])) if parse_numeric(v)[0] is not None else str(v)))
+            nonnull = s.dropna()
+            num_ok = 0.0
+            transformations.append({"field": name, "action": "treated as a code", "detail": "whole numbers in an ID/number column are labels, not amounts"})
         if num_ok >= 0.85:
             meta.dtype = "numeric"
-            full = s.map(lambda v: parse_numeric(v)[0])
+            full = _umap(s, lambda v: parse_numeric(v)[0])
             cur = Counter(i.get("currency") for i in infos if i.get("currency"))
             pct = sum(1 for i in infos if i.get("percent"))
             scales = Counter(i.get("scale") for i in infos if i.get("scale"))
@@ -393,7 +605,7 @@ def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> 
             columns.append(meta)
             continue
         # --- boolean / categorical / text / identifier
-        strs = nonnull.map(lambda v: " ".join(str(v).split()))
+        strs = _umap(nonnull, lambda v: " ".join(str(v).split()))
         lowered = set(strs.str.lower())
         if lowered and lowered.issubset({"yes", "no", "true", "false", "y", "n", "1", "0"}):
             meta.dtype = "boolean"
@@ -409,7 +621,7 @@ def normalize_table(raw: pd.DataFrame, row_numbers: list[int] | None = None) -> 
                 meta.dtype = "text"
             else:
                 meta.dtype = "categorical"
-        cleaned = s.map(lambda v: None if v is None else " ".join(str(v).split()))
+        cleaned = _umap(s, lambda v: None if v is None or (isinstance(v, float) and np.isnan(v)) else " ".join(str(v).split()))
         if meta.dtype == "categorical":
             # harmonise case / punctuation variants: 'meta', 'Meta ', 'META' -> most frequent spelling
             groups: dict[str, Counter] = {}
@@ -558,7 +770,8 @@ def reshape_wide(raw: pd.DataFrame, row_numbers: list[int] | None) -> tuple[pd.D
     """
     cols = [str(c) for c in raw.columns]
     period_cols = [c for c in cols if PERIOD_HEADER_RE.match(c)]
-    other = [c for c in cols if c not in period_cols]
+    totals = [c for c in cols if TOTAL_COL_RE.match(c)] if len(period_cols) >= 2 else []
+    other = [c for c in cols if c not in period_cols and c not in totals]
     if len(period_cols) < 2 or not other:
         return raw, row_numbers, None
     # the period columns must be mostly numeric
@@ -568,12 +781,14 @@ def reshape_wide(raw: pd.DataFrame, row_numbers: list[int] | None) -> tuple[pd.D
     rows = row_numbers if row_numbers and len(row_numbers) == len(raw) else list(range(2, len(raw) + 2))
     tmp = raw.copy()
     tmp.columns = cols
+    tmp = tmp.drop(columns=totals)
     tmp["__src_row__"] = rows
     long = tmp.melt(id_vars=other + ["__src_row__"], value_vars=period_cols, var_name="Period", value_name="Value")
     long["Period"] = long["Period"].str.strip()
     long_rows = long.pop("__src_row__").tolist()
     note = {"field": "(table)", "action": "reshaped wide table to long format",
-            "detail": f"period columns {', '.join(period_cols)} became rows (Period, Value)"}
+            "detail": f"period columns {', '.join(period_cols)} became rows (Period, Value)"
+                      + (f"; the {', '.join(totals)} column(s) repeat the sum and were left out" if totals else "")}
     return long.reset_index(drop=True), long_rows, note
 
 

@@ -65,6 +65,10 @@ def analyse_anomalies(pdata: ProjectData, mode: str) -> list[Finding]:
             for b in ms[i + 1:]:
                 if frozenset((ds.role(a), ds.role(b))) in DERIVED_PAIRS or ds.role(a) == ds.role(b):
                     continue
+                pair = ds.df[[a, b]].dropna()
+                if len(pair) and ((pair[a] == pair[b]).mean() >= 0.9 or
+                                  ((pair[b] != 0).all() and (pair[a] / pair[b]).std() <= 0.01 * abs((pair[a] / pair[b]).mean()))):
+                    continue  # one column is a copy or fixed multiple of the other (e.g. unit cost x quantity 1)
                 cr = correlation(ds.df[a], ds.df[b])
                 if not cr or abs(cr["spearman"]) < 0.5 or cr["spearman_p"] >= 0.01:
                     continue

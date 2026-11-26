@@ -189,7 +189,7 @@ The demo files live in `sample-data/consumer-health/` and can be regenerated wit
 │   ├── app/
 │   │   ├── api/          HTTP endpoints (auth, projects, files, analysis, ask, reports)
 │   │   ├── auth/         authentication & e-mail provider abstractions
-│   │   ├── parsers/      PDF, XLSX, CSV, DOCX, PPTX, TXT/MD, image/OCR/chart readers
+│   │   ├── parsers/      PDF, Excel (XLSX/XLSM/XLSB/XLS), ODS, CSV/TSV/TXT, JSON, DOCX, PPTX, MD, image/OCR/chart readers
 │   │   ├── analytics/    the analysis engine (see docs/ANALYSIS_ENGINE.md)
 │   │   ├── reports/      report builder + PDF/DOCX/XLSX exporters
 │   │   ├── storage/      StorageProvider: local + S3-compatible

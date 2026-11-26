@@ -11,6 +11,7 @@ numpy==2.5.3
 scipy==1.18.1
 scikit-learn==1.9.1         # text similarity (strategy comparison, Ask Your Data retrieval)
 openpyxl==3.1.5             # Excel read + XLSX export
+python-calamine==0.8.2      # reads .xls, .xlsb, .ods and damaged .xlsx files (fast, low memory)
 pdfplumber==0.11.10         # PDF text & tables
 pypdfium2==5.14.0           # renders scanned PDF pages for OCR
 python-docx==1.2.0          # Word read + DOCX export

@@ -5,6 +5,7 @@ Run locally (from the backend folder):  uvicorn app.main:app --reload --port 800
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -129,6 +130,13 @@ async def on_unexpected(request: Request, exc: Exception):
                                    "next": "Try again. If it keeps happening, contact the administrator."}}, status_code=500)
 
 
+FILE_INTERRUPTED = json.dumps([{
+    "what": "Processing of this file was interrupted.",
+    "why": "The server restarted while the file was being read (for example after an update, or because it ran out of memory).",
+    "next": "Click Re-process. If it stops again, split the file into smaller parts and upload them separately.",
+    "can_still": "Other files in the project can still be analysed."}])
+
+
 def _startup():
     log.info("Starting Data Intelligence Platform (environment: %s)", settings.app_env)
     problems = settings.validate()
@@ -165,7 +173,12 @@ def _startup():
                       [now(), '[{"what": "The analysis was interrupted.", "why": "The server restarted while it was running (free servers restart after inactivity).", "next": "Run the analysis again."}]'])
         if n:
             log.warning("Marked %s interrupted analysis run(s) as failed", n)
-        c.execute("UPDATE files SET status = 'uploaded' WHERE status = 'processing'")
+        # A file that was mid-processing is not retried automatically: if it was what stopped the server
+        # (e.g. ran out of memory) an automatic retry would stop it again and again.
+        interrupted = c.execute("UPDATE files SET status = 'failed', error_json = ?, updated_at = ? WHERE status = 'processing'",
+                                [FILE_INTERRUPTED, now()])
+        if interrupted:
+            log.warning("Marked %s interrupted file(s) as failed (user can click Re-process)", interrupted)
         pending = [r["id"] for r in c.fetchall("SELECT id FROM files WHERE status = 'uploaded' ORDER BY created_at")]
     if pending:
         from .services.ingestion import process_file

@@ -11,7 +11,7 @@ const ROLES: [string, string][] = [
   ["current_strategy", "Current strategy"], ["proposed_strategy", "Proposed strategy"], ["plan", "Plan"], ["other", "Other"],
 ];
 const STATUS_TONE: Record<string, "green" | "amber" | "red" | "slate" | "blue"> = { processed: "green", partial: "amber", failed: "red", uploaded: "slate", processing: "blue" };
-const ACCEPT = ".pdf,.xlsx,.csv,.tsv,.docx,.pptx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff";
+const ACCEPT = ".pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,.tsv,.tab,.txt,.json,.jsonl,.docx,.pptx,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff";
 
 export function SourcesPage({ d, reload }: { d: ProjectDetail; reload: () => void }) {
   const pid = d.project.id;

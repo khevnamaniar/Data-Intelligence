@@ -1,6 +1,7 @@
 """Comparison engine: period vs period, segment vs segment, plan vs actual, source vs source; concentration."""
 from __future__ import annotations
 
+import logging
 import re
 
 import numpy as np
@@ -9,6 +10,8 @@ import pandas as pd
 from .model import DatasetView, Finding, ProjectData, fmt_num, fmt_pct
 from .stats import hhi, pct_change, share_table
 from .trends import IMPACT_BY_ROLE
+
+log = logging.getLogger("dip.analytics")
 
 STABLE_PCT = 2.0
 
@@ -19,6 +22,10 @@ def analyse_comparisons(pdata: ProjectData, mode: str) -> list[Finding]:
         out += period_comparison(ds, mode)
         out += segment_comparison(ds, mode)
         out += plan_vs_actual(ds)
+        try:
+            out += schedule_distribution(ds)
+        except Exception:  # an optional view must never stop the other comparisons
+            log.exception("Schedule view failed for %s", ds.name)
     if mode != "quick":
         out += source_comparison(pdata)
     return out
@@ -164,6 +171,69 @@ def segment_comparison(ds: DatasetView, mode: str) -> list[Finding]:
 
 _PLAN_RE = re.compile(r"\b(plan|planned|target|budget|forecast|goal)\b", re.I)
 _ACT_RE = re.compile(r"\b(actual|actuals|achieved|outturn|delivered)\b", re.I)
+
+
+SCHEDULE_DATE_RE = re.compile(r"start|from|begin|launch|\bdate\b|week|month|go.?live|on.?air|in.?store", re.I)
+SCHEDULE_EXCLUDE_RE = re.compile(r"\bend\b|due|expir|until|birth|founded|created|hire|modified|updated", re.I)
+MONEY_ROLES = ("spend", "actual", "budget", "plan", "cost", "revenue", "sales", "price")
+
+
+def schedule_distribution(ds: DatasetView) -> list[Finding]:
+    """Plans and schedules (promotions, campaigns, activities) with a start date but no reporting period:
+    show when the money is planned - busiest months, quarter split and empty months - instead of a 'trend'."""
+    if ds.time_col:
+        return []
+    dcol = next((c.name for c in ds.columns.values() if c.dtype == "datetime" and SCHEDULE_DATE_RE.search(c.name)
+                 and not SCHEDULE_EXCLUDE_RE.search(c.name)), None)
+    if not dcol:
+        return []
+    ms = ds.measures()
+    money = [x for x in ms if ds.role(x) in MONEY_ROLES and ds.additive(x)] or [x for x in ms if ds.additive(x)]
+    money = [x for x in money if float(ds.df[x].abs().sum()) > 0]
+    m = max(money, key=lambda x: float(ds.df[x].abs().sum())) if money else None
+    if not m:
+        return []
+    d = pd.to_datetime(ds.df[dcol], errors="coerce")
+    sub = ds.df.assign(__m=d.dt.to_period("M")).dropna(subset=["__m", m])
+    if sub["__m"].nunique() < 2 or len(sub) < 3:
+        return []
+    by = sub.groupby("__m")[m].sum()
+    full = pd.period_range(by.index.min(), by.index.max(), freq="M")
+    by = by.reindex(full, fill_value=0.0)
+    total = float(by.sum())
+    if total <= 0:
+        return []
+    unit = ds.unit(m)
+    share = by / total * 100
+    top = share.sort_values(ascending=False)
+    lab = lambda p: p.strftime("%b %Y")  # noqa: E731
+    peaks = [f"{lab(p)} {fmt_num(float(by[p]), unit)} ({float(top[p]):.0f}%)" for p in top.index[:3] if by[p] > 0]
+    empty = [lab(p) for p in by.index if by[p] == 0]
+    q = sub.assign(__q=sub["__m"].map(lambda p: f"Q{p.quarter} {p.year}")).groupby("__q")[m].sum()
+    q_txt = ", ".join(f"{k} {float(v) / total * 100:.0f}%" for k, v in q.items())
+    h_txt = ""
+    if len({p.year for p in by.index}) == 1 and any(p.month <= 6 for p in by.index) and any(p.month > 6 for p in by.index):
+        h1 = float(sum(float(by[p]) for p in by.index if p.month <= 6)) / total * 100
+        h_txt = f" The first half of the year holds {h1:.0f}% and the second half {100 - h1:.0f}%."
+    n_items = int(len(sub))
+    top_share = float(top.iloc[0])
+    fact = (f"{fmt_num(total, unit)} of {m} across {n_items} item(s) dated by '{dcol}' from {lab(by.index[0])} to {lab(by.index[-1])}. "
+            f"Busiest months: {'; '.join(peaks)}. By quarter: {q_txt}.{h_txt}"
+            + (f" Nothing is planned in {', '.join(empty[:6])}{'…' if len(empty) > 6 else ''}." if empty else ""))
+    lumpy = top_share >= 30 or len(empty) >= max(2, len(by) // 3)
+    chart = {"type": "bar", "title": f"{m} by month", "question": f"When is {m} planned?", "x_label": "Month", "y_label": m,
+             "unit": unit, "categories": [lab(p) for p in by.index], "series": [{"name": m, "values": [round(float(v), 2) for v in by.values]}]}
+    return [Finding(
+        category="concentration", title=f"{m} by month: busiest is {lab(top.index[0])} ({top_share:.0f}% of the total)",
+        fact=fact,
+        interpretation=("Planned activity is bunched into a few months." if lumpy else "Planned activity is spread fairly evenly across the period."),
+        implication=("Busy months need the most stock, staff and approval capacity; quiet months may be missed opportunities."
+                     if lumpy else "Workload and spend should stay steady across the period."),
+        validation="Check the dates in the plan are final, and whether the quiet months are intentional.",
+        confidence="high" if not ds.approximate else "medium", evidence=[ds.evidence([dcol, m], pd.Series(ds.df.index.isin(sub.index), index=ds.df.index))],
+        magnitude=min(1.0, 0.4 + top_share / 100), impact=0.6, chart=chart,
+        tags=["schedule", "timing", "month", "calendar", "comparison", m.lower(), ds.role(m), dcol.lower()],
+        key=f"sched:{ds.id}:{m}")]
 
 
 def _base(name: str) -> str:

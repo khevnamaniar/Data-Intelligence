@@ -131,6 +131,12 @@ not using Amazon.)
 ## MAX_UPLOAD_MB ✅
 **Plain English:** the largest single file accepted. **Value:** `20` (keeps memory use safe on the free server).
 
+## MAX_CELLS (optional — leave it out on the free plan)
+**Plain English:** the most spreadsheet cells read from one file (rows × columns). The default, `1500000`
+(about 150,000 rows of 10 columns), keeps the free 512 MB server from running out of memory. Bigger files are
+read up to this point and the file shows a clear note. **Only raise it** if you move to a larger Render plan
+(for example `4000000` on a 2 GB plan).
+
 ## OCR_ENABLED ✅
 **Plain English:** reading text inside images and scanned PDFs needs a program (Tesseract) that the free Render
 setup cannot install. **Value:** `false`. Images are still accepted, and bar-chart shapes are still read approximately.

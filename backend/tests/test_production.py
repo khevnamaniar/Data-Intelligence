@@ -242,15 +242,21 @@ def test_programs_and_macros_are_refused(client):
     p = client.post("/api/projects", json={"name": "P"}).json()["project"]
     zbuf = io.BytesIO()
     with zipfile.ZipFile(zbuf, "w") as z:
+        z.writestr("word/document.xml", "<document/>")
+        z.writestr("word/vbaProject.bin", b"macro")
+    ebuf = io.BytesIO()
+    with zipfile.ZipFile(ebuf, "w") as z:
         z.writestr("xl/workbook.xml", "<workbook/>")
-        z.writestr("xl/vbaProject.bin", b"macro")
+        z.writestr("xl/embeddings/run.exe", b"MZ")
     files = [("files", ("report.pdf", b"MZ\x90\x00 fake exe", "application/pdf")),
              ("files", ("data.csv", b"#!/bin/sh\nrm -rf /\n", "text/csv")),
-             ("files", ("book.xlsx", zbuf.getvalue(), "application/octet-stream"))]
+             ("files", ("letter.docx", zbuf.getvalue(), "application/octet-stream")),
+             ("files", ("book.xlsx", ebuf.getvalue(), "application/octet-stream"))]
     r = client.post(f"/api/projects/{p['id']}/files", files=files)
     rej = {x["name"]: x["what"] for x in r.json()["rejected"]}
     assert "program or script" in rej["report.pdf"] and "program or script" in rej["data.csv"]
-    assert "macros" in rej["book.xlsx"]
+    assert "macros" in rej["letter.docx"] and "embedded programs" in rej["book.xlsx"]
+    # macro-enabled workbooks (.xlsm) are accepted for their data; macros are never run (see test_messy_sheets)
 
 
 def test_source_processing_summary(client):

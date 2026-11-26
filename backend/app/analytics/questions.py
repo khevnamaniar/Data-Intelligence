@@ -26,10 +26,12 @@ INTENTS = {
     "competition": r"compet|rival|brand",
     "anomaly": r"anomal|unusual|outlier|strange|spike|drop",
     "recommendation": r"should (we|i)|recommend|what to do|action|taken forward|change\b",
+    "ranking": r"\bmost\b|\bleast\b|biggest|largest|highest|lowest|\btop\b|where (is|are|does|do) .*(going|spent|go)\b|breakdown|split|share of|spread|distribut|phasing|calendar|timing|by month|\bwhen\b",
+    "cost": r"\bcosts?\b|spend|budget|expens|\bfees?\b|invest|paid\b|payment",
 }
 CATEGORY_INTENTS = {
     "trend": {"trend", "change"}, "change": {"change", "trend"}, "comparison": {"comparison", "change"},
-    "concentration": {"comparison", "risk", "product"}, "gap": {"gap", "opportunity", "research"}, "opportunity": {"opportunity", "product", "gap"},
+    "concentration": {"comparison", "risk", "product", "ranking"}, "gap": {"gap", "opportunity", "research"}, "opportunity": {"opportunity", "product", "gap"},
     "marketing": {"marketing", "roas"}, "roas": {"roas", "marketing"}, "strategy": {"strategy", "change", "comparison", "recommendation"},
     "plan_vs_actual": {"strategy", "comparison", "gap"}, "impact": {"impact", "risk"}, "anomaly": {"anomaly", "trend"},
     "relationship": {"comparison"}, "reported": {"trend"}, "contradiction": {"comparison", "research"}, "theme": set(),
@@ -60,21 +62,30 @@ def detect_intents(question: str) -> list[str]:
     return found or ["general"]
 
 
+def _stem(w: str) -> str:
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
 def _terms(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9][a-z0-9\-]{2,}", text.lower())
+    return {_stem(w) for w in re.findall(r"[a-z0-9][a-z0-9\-]{2,}", text.lower())
             if w not in {"what", "which", "the", "are", "is", "does", "how", "with", "and", "for", "our", "this", "that", "have", "there",
-                         "major", "most", "should", "being", "particular", "data", "from"}}
+                         "major", "most", "should", "being", "particular", "data", "from", "where", "going", "who", "why"}}
 
 
 PRIMARY = {"gap": {"gap"}, "opportunity": {"opportunity"}, "trend": {"trend"}, "roas": {"roas", "marketing"},
            "marketing": {"marketing", "roas"}, "strategy": {"strategy", "plan_vs_actual"}, "risk": {"concentration", "impact"},
            "comparison": {"comparison", "plan_vs_actual"}, "change": {"change", "comparison"}, "impact": {"impact"},
-           "anomaly": {"anomaly"}, "product": {"opportunity"}}
+           "anomaly": {"anomaly"}, "product": {"opportunity"}, "ranking": {"concentration", "comparison"}}
 
 
 INTENT_ROLES = {"customer": {"customer_segment"}, "keyword": {"keyword"}, "device": {"device"}, "geography": {"geography"},
                 "competition": {"company", "brand"}, "product": {"product", "category"},
                 "marketing": {"campaign", "channel", "keyword"}}
+COST_ROLES = {"spend", "actual", "cost", "price", "budget", "plan"}
 
 
 def relevance(f: Finding, intents: list[str], terms: set[str]) -> float:
@@ -87,6 +98,8 @@ def relevance(f: Finding, intents: list[str], terms: set[str]) -> float:
     if role_hit:  # "which keywords / devices / audiences…" -> findings broken down that way come first
         s += 0.25
     if any(f.category in PRIMARY.get(i, set()) for i in intents):
+        s += 0.2
+    if "cost" in intents and any(f"role:{r}" in tagset or r in tagset for r in COST_ROLES):
         s += 0.2
     text_terms = _terms(" ".join([f.title] + list(tagset)))
     if terms:

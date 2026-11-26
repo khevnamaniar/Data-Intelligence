@@ -50,7 +50,7 @@ def guess_role(name: str, file_type: str) -> str:
                       ("survey", "survey"), ("report", "report")):
         if key in n:
             return role
-    return "dataset" if file_type in ("csv", "xlsx") else "report"
+    return "dataset" if file_type in ("csv", "xlsx", "xlsm", "xlsb", "xls", "ods", "json") else "report"
 
 
 def store_upload(c: Connection, project_id: str, user_id: str, filename: str, data: bytes, role: str = "auto",
@@ -147,7 +147,26 @@ def process_file(file_id: str) -> dict:
             c.update("files", file_id, {"status": "failed", "error_json": err, "updated_at": now()})
         return {"status": "failed", "errors": err}
 
+    try:
+        return _store_result(db, storage, f, file_id, project_id, result, t0)
+    except Exception as exc:  # never leave a file stuck at "processing"
+        log.error("Unexpected error saving results for %s: %s", file_id[:8], traceback.format_exc())
+        err = [{"what": "The file was read, but its results could not be saved.", "why": f"Unexpected error ({exc.__class__.__name__}).",
+                "next": "Click Re-process in a minute. If it keeps failing, send the file to support.",
+                "can_still": "Other files in the project can still be analysed."}]
+        with db.tx() as c:
+            c.update("files", file_id, {"status": "failed", "error_json": err, "updated_at": now()})
+        return {"status": "failed", "errors": err}
+
+
+PROCESS_BUDGET_SECONDS = 300
+
+
+def _store_result(db, storage, f, file_id, project_id, result, t0) -> dict:
+    import time as _time
+
     datasets_summary, issue_count = [], 0
+    skipped: list[str] = []
     with db.tx() as c:
         # remove previous extraction (re-process)
         old = c.fetchall("SELECT normalized_storage_key FROM datasets WHERE file_id = ?", [file_id])
@@ -162,13 +181,23 @@ def process_file(file_id: str) -> dict:
                 "id": new_id(), "project_id": project_id, "file_id": file_id, "seq": seq, "kind": ch.kind,
                 "heading": ch.heading[:1000], "text": ch.text[:20000], "locator_json": ch.locator,
                 "is_approximate": ch.approximate, "created_at": now()})
+        budget, timed_out = PROCESS_BUDGET_SECONDS, 0
         for ti, table in enumerate(result.tables):
-            df, rows, wide_note = reshape_wide(table.df, table.row_numbers)
-            if wide_note and "Value" in df.columns:
-                title = _context_title(table, result.chunks)
-                if title:
-                    df = df.rename(columns={"Value": title[:120]})
-            norm = normalize_table(df, rows)
+            if _time.perf_counter() - t0 > budget:  # a file must never keep the server busy for long
+                timed_out = len(result.tables) - ti
+                log.warning("Time budget reached for %s after %d of %d tables", file_id[:8], ti, len(result.tables))
+                break
+            try:
+                df, rows, wide_note = reshape_wide(table.df, table.row_numbers)
+                if wide_note and "Value" in df.columns:
+                    title = _context_title(table, result.chunks)
+                    if title:
+                        df = df.rename(columns={"Value": title[:120]})
+                norm = normalize_table(df, rows)
+            except Exception:  # one odd table must not stop the rest of the file
+                log.error("Table '%s' in %s could not be prepared: %s", table.name, file_id[:8], traceback.format_exc())
+                skipped.append(table.name.split(" › ")[-1])
+                continue
             if wide_note:
                 norm.transformations.insert(0, wide_note)
             ds_id = new_id()
@@ -215,14 +244,28 @@ def process_file(file_id: str) -> dict:
         extraction = {"tables": len(result.tables), "chunks": len(result.chunks), "chunk_kinds": kinds,
                       "datasets": datasets_summary, "warnings": result.warnings, "metadata": result.metadata,
                       "quality_issues": issue_count}
-        upd = {"status": result.status, "extraction_json": extraction, "error_json": result.errors or None, "updated_at": now()}
+        errors = list(result.errors or [])
+        status = result.status
+        if skipped:
+            errors.append({"what": f"{len(skipped)} table(s) could not be prepared: {', '.join(skipped[:5])}" + ("…" if len(skipped) > 5 else ""),
+                           "why": "Their layout was unusual and caused an unexpected error.",
+                           "next": "The rest of the file was processed. Click Re-process after the next update, or send the file to support.",
+                           "can_still": "All other tables and text in this file can be analysed."})
+            status = "partial" if datasets_summary or result.chunks else "failed"
+        if timed_out:
+            errors.append({"what": f"{timed_out} table(s) were not prepared because the file took too long.",
+                           "why": f"Each file has a {PROCESS_BUDGET_SECONDS // 60}-minute processing limit so the server stays responsive.",
+                           "next": "Split the file into smaller files and upload them separately.",
+                           "can_still": "The tables prepared before the limit can be analysed."})
+            status = "partial"
+        upd = {"status": status, "extraction_json": extraction, "error_json": errors or None, "updated_at": now()}
         period = (result.metadata or {}).get("report_period")
         if period and not (f.get("period_label") or "").strip():
             upd["period_label"] = period["label"][:100]  # e.g. "Aug 2026", read from the report itself
         c.update("files", file_id, upd)
-    log.info("File %s processed: status=%s tables=%s text_blocks=%s issues=%s (%.1fs)", file_id[:8], result.status,
+    log.info("File %s processed: status=%s tables=%s text_blocks=%s issues=%s (%.1fs)", file_id[:8], status,
              len(result.tables), len(result.chunks), issue_count, _time.perf_counter() - t0)
-    return {"status": result.status, "extraction": extraction, "errors": result.errors}
+    return {"status": status, "extraction": extraction, "errors": errors}
 
 
 # ----------------------------------------------------------------- loading for analysis
